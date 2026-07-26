@@ -69,7 +69,7 @@ pip install git+https://github.com/Asem-D/arcgis-portal-mcp.git
 
 ### `.env` File (recommended)
 
-Create a `.env` file in the project root for automatic connection on startup. A template is provided:
+Create a `.env` file for automatic connection on startup. A template is provided:
 
 ```bash
 cp .env.example .env
@@ -86,7 +86,14 @@ password=your-portal-password
 # oauth_client_secret=your-oauth-app-client-secret
 ```
 
-The server reads these on startup and connects automatically. If `username` + `password` are provided, it uses `generateToken` (user-level, full permissions). Otherwise, it falls back to `client_credentials` (app-level, limited). No manual `connect_portal` call needed.
+The server searches for `.env` in this order:
+1. **Package directory** (next to the server code) — works for source installs
+2. **Current working directory** — works when launched from the project root
+3. **`~/.arcgis-portal-mcp/.env`** — works for `pip install` users
+
+Quoted values are supported: `password="my secret"`. Existing OS environment variables take precedence over `.env` values.
+
+The server reads `.env` on startup and connects automatically. If `username` + `password` are provided, it uses `generateToken` (user-level, full permissions). Otherwise, it falls back to `client_credentials` (app-level, limited). No manual `connect_portal` call needed.
 
 > **Note:** The `.env` file is gitignored. Never commit credentials. `.env.example` is safe to commit.
 
@@ -106,7 +113,7 @@ For MCP clients (Claude Desktop, Cursor, etc.), the simplest setup uses a `.env`
 }
 ```
 
-The server auto-connects from `.env` in the working directory. No env vars needed in the MCP config.
+The server auto-connects from `.env` (searched in package dir, CWD, or `~/.arcgis-portal-mcp/`). No env vars needed in the MCP config.
 
 Alternatively, pass credentials via MCP client env vars:
 

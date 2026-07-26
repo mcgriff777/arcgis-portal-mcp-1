@@ -50,6 +50,7 @@ class ArcGISClient:
         self._token_expires: float | None = None
         self._username: str | None = None
         self._user_info: dict[str, Any] | None = None
+        self._auth_method: str | None = None
         self._session = requests.Session()
         self._session.verify = False  # noqa: S501, Enterprise portals often use self-signed certs
         self._session.timeout = 30
@@ -108,6 +109,7 @@ class ArcGISClient:
         self._token = token
         self._username = user_info.get("username", "unknown")
         self._user_info = user_info
+        self._auth_method = "token"
         # Tokens from sharing API don't always include expires, assume long-lived
         self._token_expires = datetime.now().timestamp() + 86400  # 24h fallback
 
@@ -155,6 +157,7 @@ class ArcGISClient:
         self._token_expires = expires_at
         self._username = "(app-level)"
         self._user_info = {"username": "(app-level)", "client_credentials": True}
+        self._auth_method = "client_credentials"
 
         logger.info("Connected via client_credentials (expires in %ds)", expires_in)
         return {
@@ -251,6 +254,7 @@ class ArcGISClient:
         self._token_expires = expires_at
         self._username = username
         self._user_info = user_info
+        self._auth_method = "oauth2"
 
         logger.info("Connected as %s (OAuth2)", username)
         return {
@@ -303,6 +307,7 @@ class ArcGISClient:
         self._token_expires = expires_at
         self._username = username
         self._user_info = {"username": username}
+        self._auth_method = "generateToken"
 
         logger.info(
             "Connected as %s via generateToken (expires in %ds)",

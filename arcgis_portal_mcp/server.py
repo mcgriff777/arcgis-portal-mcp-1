@@ -86,43 +86,109 @@ def _require_connected() -> ArcGISClient | None:
     return client
 
 
-def _load_env() -> dict[str, str]:
-    """Load environment variables from .env file (next to this package).
+_env_cache: dict[str, str] | None = None
 
-    Returns a dict of KEY=VALUE pairs found in the .env file.
-    Existing environment variables take precedence (not overwritten).
+
+def _find_env_path() -> Path | None:
+    """Search for .env file in standard locations.
+
+    Returns the first path that exists, or None.
+    """
+    candidates = [
+        Path(__file__).resolve().parent.parent / ".env",  # package dir
+        Path.cwd() / ".env",                               # working dir
+        Path.home() / ".arcgis-portal-mcp" / ".env",       # home dir (pip installs)
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    logger.debug("No .env file found (searched: %s)", ", ".join(str(c) for c in candidates))
+    return None
+
+
+def _load_env_file(env_path: Path) -> dict[str, str]:
+    """Parse a .env file and return key-value pairs.
+
+    Handles: comments, blank lines, quoted values, BOM, empty values.
+    Sets non-empty values in os.environ (existing env vars take precedence).
     """
     env_vars: dict[str, str] = {}
 
-    # Look for .env in the package directory (next to server.py)
-    # Use resolve() so relative __file__ paths (from python -m) work correctly
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    if not env_path.exists():
-        # Also check current working directory
-        env_path = Path.cwd() / ".env"
+    logger.info("Loading env from %s", env_path)
 
-    if env_path.exists():
-        logger.info("Loading env from %s", env_path)
-        with open(env_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    key, _, value = line.partition("=")
-                    key = key.strip()
-                    value = value.strip()
-                    # Don't override existing env vars
-                    if key not in os.environ:
-                        os.environ[key] = value
-                    env_vars[key] = os.environ[key]
-    else:
-        logger.debug("No .env file found")
+    with open(env_path, encoding="utf-8-sig") as f:  # utf-8-sig strips BOM
+        for lineno, raw_line in enumerate(f, start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                logger.warning(".env line %d: no '=' sign, skipping: %r", lineno, line)
+                continue
 
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+
+            if not key:
+                logger.warning(".env line %d: empty key, skipping", lineno)
+                continue
+
+            # Strip surrounding quotes (single or double) from values
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+
+            # Skip empty values — don't pollute os.environ with ghost credentials
+            if not value:
+                logger.debug(".env: skipping empty value for key '%s'", key)
+                continue
+
+            # Don't override existing env vars (real env takes precedence)
+            if key not in os.environ:
+                os.environ[key] = value
+            env_vars[key] = os.environ[key]
+
+    logger.info(
+        "Loaded %d env var(s) from %s",
+        len(env_vars),
+        env_path,
+    )
     return env_vars
 
 
-def _auto_connect() -> bool:
+def _load_env() -> dict[str, str]:
+    """Load environment variables from .env file.
+
+    Searches for .env in this order:
+    1. Package directory (next to this file) — works for dev/source installs
+    2. Current working directory — works when launched from project root
+    3. User home (~/.arcgis-portal-mcp/.env) — works for pip installs
+
+    Returns a dict of KEY=VALUE pairs found in the .env file.
+    Existing environment variables take precedence (not overwritten).
+    Results are cached after the first call.
+    """
+    global _env_cache
+    if _env_cache is not None:
+        return _env_cache
+
+    env_path = _find_env_path()
+    if env_path is None:
+        _env_cache = {}
+        return {}
+
+    _env_cache = _load_env_file(env_path)
+    return _env_cache
+
+
+def _reset_env_cache() -> None:
+    """Reset the env cache. For testing only."""
+    global _env_cache
+    _env_cache = None
+
+
+def _auto_connect() -> tuple[bool, str | None]:
     """Auto-connect using credentials from .env file.
 
     Tries in order:
@@ -130,7 +196,7 @@ def _auto_connect() -> bool:
     1. username + password -> generateToken (user-level, full permissions)
     2. client_id + client_secret -> client_credentials (app-level, limited)
 
-    Returns True if connection succeeded or already connected, False otherwise.
+    Returns (True, method_name) if connected, (False, None) otherwise.
     """
     client = _get_client()
 
@@ -138,7 +204,7 @@ def _auto_connect() -> bool:
     # unnecessary .env loading and to survive env-path quirks on some hosts)
     if client.is_connected:
         logger.info("Auto-connect: reusing existing connection as %s", client.username)
-        return True
+        return True, "reused"
 
     env = _load_env()
 
@@ -150,7 +216,7 @@ def _auto_connect() -> bool:
 
     if not portal_url:
         logger.info("Auto-connect skipped: no portal_url in .env")
-        return False
+        return False, None
 
     # Try username/password first (user-level token)
     if username and password:
@@ -161,7 +227,7 @@ def _auto_connect() -> bool:
                 portal_url,
                 result.get("username", "unknown"),
             )
-            return True
+            return True, "generateToken"
         except Exception as e:
             logger.warning("generateToken auth failed, falling back to client_credentials: %s", e)
 
@@ -174,7 +240,7 @@ def _auto_connect() -> bool:
                 portal_url,
                 result.get("username", "unknown"),
             )
-            return True
+            return True, "client_credentials"
         except Exception as e:
             logger.warning("client_credentials auth failed: %s", e)
 
@@ -182,7 +248,7 @@ def _auto_connect() -> bool:
         "Auto-connect skipped: no usable credentials in .env "
         "(need username+password or oauth_client_id+oauth_client_secret)"
     )
-    return False
+    return False, None
 
 
 # =========================================================================
@@ -233,16 +299,17 @@ def connect_portal(
     try:
         if auth_method == "auto":
             # Try auto-connect from .env
-            if _auto_connect():
-                # Determine which method was used
-                env = _load_env()
-                has_user = env.get("username") or os.environ.get("ARCGIS_USERNAME")
-                method_used = "generateToken (auto)" if has_user else "client_credentials (auto)"
+            connected, method = _auto_connect()
+            if connected:
+                if method == "reused":
+                    method_label = f"{client._auth_method} (auto, reused)" if client._auth_method else "auto (reused)"
+                else:
+                    method_label = f"{method} (auto)"
                 return {
                     "status": "ok",
                     "username": client.username,
                     "portal_url": client.portal_url,
-                    "auth_method": method_used,
+                    "auth_method": method_label,
                     "expires_in": client._token_expires - __import__("time").time() if client._token_expires else None,
                 }
             else:
@@ -1700,8 +1767,9 @@ def main() -> None:
     logger.info("Starting ArcGIS Portal MCP Server v%s", __version__)
 
     # Auto-connect from .env if credentials are available
-    if _auto_connect():
-        logger.info("Ready, connected to portal via .env credentials")
+    connected, method = _auto_connect()
+    if connected:
+        logger.info("Ready, connected to portal via .env credentials (method: %s)", method)
     else:
         logger.info("Ready, waiting for connect_portal tool call")
 
