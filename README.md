@@ -49,12 +49,15 @@ What's new in v1.5.0:
 ## Installation
 
 ```bash
-# From source
+pip install git+https://github.com/Asem-D/arcgis-portal-mcp.git
+```
+
+Or clone and install from source:
+
+```bash
+git clone https://github.com/Asem-D/arcgis-portal-mcp.git
 cd arcgis-portal-mcp
 pip install -e .
-
-# Or install from GitHub
-pip install git+https://github.com/Asem-D/arcgis-portal-mcp.git
 ```
 
 **Windows users:** `pywin32` is installed automatically as a platform-specific dependency.
@@ -297,10 +300,9 @@ Here's what we're working on for upcoming releases:
 - **`describe_portal`**: A comprehensive portal overview tool that gives you organization details, user counts, storage, and licensing in a single call.
 - **`portal_storage_report`**: Detailed breakdown of storage usage by item type, owner, and age.
 - **`batch_publish`**: Upload and publish multiple files in one operation.
-- **`service_health_check`**: Validate that all feature services in your portal are responding, have correct schemas, and aren't hitting query limits.
 - **`OAuth2 token refresh`**: Automatic token refresh so you never get logged out mid-session.
 
-If any of these would solve a problem you're facing, open an issue and let us know. We prioritize based on real-world needs.
+If any of these would solve a problem you're facing, [open an issue](https://github.com/Asem-D/arcgis-portal-mcp/issues) and let us know. We prioritize based on real-world needs.
 
 ## Development
 
