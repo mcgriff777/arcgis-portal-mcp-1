@@ -1,6 +1,6 @@
 # arcgis-portal-mcp
 
-**v1.2.0.** 34 tools for ArcGIS Enterprise Portal and ArcGIS Online.
+**v1.5.0.** 42 tools for ArcGIS Enterprise Portal and ArcGIS Online.
 
 A Model Context Protocol (MCP) server that gives AI assistants direct access to your ArcGIS content. Search, inspect, edit, publish, and admin through natural language.
 
@@ -8,21 +8,15 @@ Works with Claude Desktop, Cursor, VS Code Copilot, and any MCP-compatible clien
 
 > **Disclaimer:** This is an independent open-source project. Not affiliated with, endorsed by, or sponsored by Esri. "ArcGIS" is a registered trademark of Esri.
 
-## What's new in v1.2.0
+## What's new in v1.5.0
 
-The last few releases added tools that were missing for real-world workflows:
-
-- **`describe_layer`**: Get the full schema of any layer: fields, types, domains, subtypes, relationships, extent, renderer. No more guessing what a feature service contains.
-- **`get_gp_task_info`**: Inspect GP tool parameter schemas before you run them.
-- **`export_map_image`**: Render MapServer or FeatureServer layers as JPG, PNG, GIF, PDF, or SVG. Useful for thumbnails, reports, and quick visual checks.
-- **`server_status`**: One call to check if the MCP server is connected and healthy.
-- **`portal_usage`**: Pull usage statistics: active users, API calls, storage breakdown.
-- **`get_item_data`**: Read the actual data inside an item: web map definitions, app configs, feature collections.
-- **`batch_delete_items`**: Delete multiple items in one shot instead of one at a time.
-- **`batch_share_items`**: Share or unshare a list of items with the same audiences.
-- **`batch_update_items`**: Update tags, titles, descriptions, or access on multiple items at once.
-- **`connect_portal`**: Now supports `username_password` auth method (generateToken, user-level permissions).
-
+What's new in v1.5.0:
+- **Item impact analysis**: find out what breaks if you delete an item.
+- **Relationship explorer**: map services, web maps, layers, and apps.
+- **Usage analytics**: API calls, active users, storage trends (admin).
+- **Group membership audit**: who is in which groups, inactive users.
+- **Service dependency scanner**: broken links, missing data sources.
+- **Batch operations**: update, share, delete multiple items at once.
 ## Features
 
 - **Connect** to any ArcGIS Enterprise Portal or ArcGIS Online.
@@ -224,7 +218,7 @@ User: How many licenses do we have left?
 Agent: [calls list_licenses to show license allocation and usage]
 ```
 
-## Available Tools (34)
+## Available Tools (42)
 
 ### Discovery and Inspection
 
@@ -274,6 +268,11 @@ Agent: [calls list_licenses to show license allocation and usage]
 | `batch_delete_items` | Delete multiple items at once |
 | `batch_share_items` | Share/unshare multiple items with the same audiences |
 | `batch_update_items` | Update properties of multiple items at once |
+| `explore_item_relationships` | Explore item relationships: services, web maps, layers, apps |
+| `audit_group_members` | Audit group membership: who's in which groups, inactive users |
+| `scan_service_dependencies` | Scan feature service dependencies: broken links, missing sources |
+| `analyze_item_impact` | Analyze item impact: what breaks if an item is deleted |
+| `get_usage_analytics` | Get portal usage analytics: API calls, active users, storage trends |
 
 ## Authentication Methods
 

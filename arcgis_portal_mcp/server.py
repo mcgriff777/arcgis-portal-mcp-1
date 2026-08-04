@@ -851,6 +851,106 @@ def server_status() -> dict[str, Any]:
 
 
 # =========================================================================
+# v1.4.0: Content Management (clone, move, service health)
+# =========================================================================
+
+
+@mcp.tool()
+def clone_item(
+    item_id: str,
+    new_title: str = "",
+    new_owner: str = "",
+    folder: str = "",
+) -> dict[str, Any]:
+    """Clone an item within the same portal.
+
+    Creates a copy of the item with its data (web maps, apps, etc.).
+    The new item gets a new ID but preserves the original's type, tags,
+    description, and access level.
+
+    Args:
+        item_id: The ID of the item to clone.
+        new_title: Title for the clone. Defaults to original title + " (Copy)".
+        new_owner: Owner of the clone. Defaults to connected user.
+        folder: Folder to place the clone in. Defaults to root.
+
+    Returns:
+        Created item info including the new item ID.
+    """
+    client = _require_connected()
+    if not client:
+        return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    result = client.clone_item(
+        item_id=item_id,
+        new_title=new_title or None,
+        new_owner=new_owner or None,
+        folder=folder or None,
+    )
+    return {"status": "ok", "result": result}
+
+
+@mcp.tool()
+def move_items(
+    item_ids: str,
+    target_owner: str,
+    source_owner: str = "",
+) -> dict[str, Any]:
+    """Move items from one user to another (reassign ownership).
+
+    Bulk transfer content ownership between portal users. Useful when
+    users leave the organization or when consolidating content.
+
+    Args:
+        item_ids: Comma-separated item IDs to move.
+        target_owner: Username to transfer items to.
+        source_owner: Current owner. Defaults to connected user.
+
+    Returns:
+        Per-item results with succeeded/failed counts.
+    """
+    client = _require_connected()
+    if not client:
+        return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    id_list = [iid.strip() for iid in item_ids.split(",") if iid.strip()]
+    if not id_list:
+        return {"status": "error", "error": "No item IDs provided."}
+
+    result = client.move_items(
+        item_ids=id_list,
+        target_owner=target_owner,
+        source_owner=source_owner or None,
+    )
+    return {"status": "ok", "result": result}
+
+
+@mcp.tool()
+def check_service_health(
+    service_url: str,
+    timeout: int = 10,
+) -> dict[str, Any]:
+    """Check the health of a GIS service endpoint.
+
+    Pings a FeatureServer, MapServer, or ImageServer and returns
+    status, response latency, version, and capabilities.
+
+    Args:
+        service_url: The service URL to check.
+        timeout: Request timeout in seconds (default 10).
+
+    Returns:
+        Health status, latency, HTTP status code, and service metadata.
+    """
+    client = _require_connected()
+    if not client:
+        return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    result = client.check_service_health(service_url, timeout=timeout)
+    return {"status": "ok", "result": result}
+
+
+# =========================================================================
 # Phase 2, Feature CRUD
 # =========================================================================
 
@@ -1679,6 +1779,149 @@ def export_map_image(
 # =========================================================================
 # Resources
 # =========================================================================
+
+
+# =========================================================================
+# v1.5.0: Relationship & Dependency Analysis Tools
+# =========================================================================
+
+
+@mcp.tool()
+def explore_item_relationships(item_id: str) -> dict[str, Any]:
+    """Explore all relationships for a portal item.
+
+    Walks both forward and reverse relationships to build a complete
+    picture of how items are connected in the portal.
+
+    Args:
+        item_id: The item ID to explore relationships for.
+
+    Returns:
+        Dict with item info and relationship list.
+    """
+    client = _require_connected()
+    if not client:
+        return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    try:
+        result = client.explore_item_relationships(item_id)
+        if "error" in result:
+            return {"status": "error", "error": result["error"]}
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def audit_group_members(group_id: str) -> dict[str, Any]:
+    """Audit all members of a portal group with roles and details.
+
+    Paginates through all members and returns username, name, email,
+    role, last login, and disabled status for each.
+
+    Args:
+        group_id: The group ID to audit.
+
+    Returns:
+        Dict with group info and complete member listing.
+    """
+    client = _require_connected()
+    if not client:
+        return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    try:
+        result = client.audit_group_members(group_id)
+        if "error" in result:
+            return {"status": "error", "error": result["error"]}
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def scan_service_dependencies(service_item_id: str) -> dict[str, Any]:
+    """Scan for all portal items that depend on a given service.
+
+    Searches for web maps, apps, and dashboards that reference the
+    service URL, and checks explicit item relationships.
+
+    Args:
+        service_item_id: The item ID of the service to scan.
+
+    Returns:
+        Dict listing all dependent items.
+    """
+    client = _require_connected()
+    if not client:
+        return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    try:
+        result = client.scan_service_dependencies(service_item_id)
+        if "error" in result:
+            return {"status": "error", "error": result["error"]}
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def analyze_item_impact(item_id: str) -> dict[str, Any]:
+    """Analyze the impact of deleting or modifying a portal item.
+
+    Combines relationship exploration, dependency scanning, and sharing
+    analysis to produce a blast radius assessment with actionable
+    recommendation.
+
+    Args:
+        item_id: The item ID to analyze for impact.
+
+    Returns:
+        Dict with impact assessment including blast radius and recommendation.
+    """
+    client = _require_connected()
+    if not client:
+        return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    try:
+        result = client.analyze_item_impact(item_id)
+        if "error" in result:
+            return {"status": "error", "error": result["error"]}
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
+def get_usage_analytics(
+    start_time: str = "",
+    end_time: str = "",
+) -> dict[str, Any]:
+    """Get enhanced portal usage analytics.
+
+    Extends basic portal usage with per-user activity ranking and
+    content type distribution breakdown.
+
+    Args:
+        start_time: Epoch milliseconds or ISO string (default: 30 days ago).
+        end_time: Epoch milliseconds or ISO string (default: now).
+
+    Returns:
+        Dict with portal stats, user activity, and content breakdown.
+    """
+    client = _require_connected()
+    if not client:
+        return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    try:
+        result = client.get_usage_analytics(
+            start_time=start_time or None,
+            end_time=end_time or None,
+        )
+        if "error" in result:
+            return {"status": "error", "error": result["error"]}
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 @mcp.resource("arcgis://guide")

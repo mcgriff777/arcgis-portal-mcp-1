@@ -1683,6 +1683,231 @@ class ArcGISClient:
             return {"error": "Export endpoint returned non-JSON response"}
 
     # ------------------------------------------------------------------
+    # Content Management (v1.4.0)
+    # ------------------------------------------------------------------
+
+    def clone_item(
+        self,
+        item_id: str,
+        new_title: str | None = None,
+        new_owner: str | None = None,
+        folder: str | None = None,
+    ) -> dict[str, Any]:
+        """Clone an item within the same portal.
+
+        Creates a copy of the item with its data (web maps, apps, etc.).
+        The new item gets a new ID but same type, tags, description, and access.
+
+        Args:
+            item_id: The ID of the item to clone.
+            new_title: Title for the clone. Defaults to original title + " (Copy)".
+            new_owner: Owner of the clone. Defaults to connected user.
+            folder: Folder to place the clone in. Defaults to root.
+
+        Returns:
+            Dict with new item info (id, item, owner, folder, etc.).
+        """
+        # Get original item details
+        item_info = self.get_item_details(item_id)
+        if not item_info or "error" in item_info:
+            return {"error": f"Could not retrieve item {item_id}: {item_info}"}
+
+        item_type = item_info.get("type", "")
+        title = new_title or f"{item_info.get('title', 'Untitled')} (Copy)"
+        tags = item_info.get("tags", "")
+        if isinstance(tags, list):
+            tags = ",".join(tags)
+        description = item_info.get("description", "")
+        snippet = item_info.get("snippet", "")
+        access = item_info.get("access", "private")
+
+        target_owner = new_owner or self.username
+        if not target_owner:
+            return {"error": "No owner specified and not connected as a user."}
+
+        # Get item data (web map definitions, app configs, etc.)
+        item_data = self.get_item_data(item_id)
+        data_json = ""
+        if item_data and "error" not in item_data:
+            import json as _json
+            data_json = _json.dumps(item_data)
+
+        # Create the clone
+        params: dict[str, Any] = {
+            "title": title,
+            "type": item_type,
+            "access": access,
+            "f": "json",
+        }
+        if tags:
+            params["tags"] = tags
+        if description:
+            params["description"] = description
+        if snippet:
+            params["snippet"] = snippet
+        if folder:
+            params["folder"] = folder
+        if data_json:
+            params["text"] = data_json
+
+        result = self._sharing_request(
+            f"/content/users/{target_owner}/addItem",
+            params=params,
+            method="POST",
+        )
+        return result or {"error": "Clone failed"}
+
+    def move_items(
+        self,
+        item_ids: list[str],
+        target_owner: str,
+        source_owner: str | None = None,
+    ) -> dict[str, Any]:
+        """Move items from one user to another (reassign ownership).
+
+        Uses the portal sharing API /transfer endpoint.
+
+        Args:
+            item_ids: List of item IDs to move.
+            target_owner: Username to transfer items to.
+            source_owner: Current owner. If not provided, uses connected user.
+
+        Returns:
+            Dict with succeeded/failed counts and per-item results.
+        """
+        if not source_owner:
+            source_owner = self.username
+        if not source_owner:
+            return {"error": "No source owner specified and not connected as a user."}
+
+        import json as _json
+
+        items_payload = [{"itemId": iid, "targetOwner": target_owner} for iid in item_ids]
+        result = self._sharing_request(
+            f"/content/users/{source_owner}/transfer",
+            params={"items": _json.dumps(items_payload)},
+            method="POST",
+        )
+
+        if not result or "error" in result:
+            return {"error": f"Transfer failed: {result}"}
+
+        # Parse results
+        transfer_results = result.get("results", [])
+        succeeded = []
+        failed = []
+        for r in transfer_results:
+            iid = r.get("itemId", "")
+            if r.get("success"):
+                succeeded.append(iid)
+            else:
+                failed.append({"item_id": iid, "error": r.get("error", {}).get("message", "Unknown error")})
+
+        return {
+            "total": len(item_ids),
+            "succeeded_count": len(succeeded),
+            "failed_count": len(failed),
+            "succeeded": succeeded,
+            "failed": failed,
+        }
+
+    def check_service_health(
+        self,
+        service_url: str,
+        timeout: int = 10,
+    ) -> dict[str, Any]:
+        """Check the health of a GIS service endpoint.
+
+        Pings the service and returns status, latency, and basic metadata.
+
+        Args:
+            service_url: The service URL to check (FeatureServer, MapServer, etc.).
+            timeout: Request timeout in seconds (default 10).
+
+        Returns:
+            Dict with status, latency_ms, status_code, available, and service info.
+        """
+        import time
+
+        # Normalize URL
+        url = service_url.rstrip("/")
+        if not url.endswith("?"):
+            url += "?f=json"
+        else:
+            url += "f=json"
+
+        start = time.monotonic()
+        try:
+            resp = self._session.get(url, timeout=timeout)
+            latency_ms = round((time.monotonic() - start) * 1000)
+            status_code = resp.status_code
+
+            if status_code != 200:
+                return {
+                    "status": "error",
+                    "available": False,
+                    "status_code": status_code,
+                    "latency_ms": latency_ms,
+                    "error": f"HTTP {status_code}",
+                    "service_url": service_url,
+                }
+
+            data = resp.json()
+            if "error" in data:
+                return {
+                    "status": "ok",
+                    "available": True,
+                    "status_code": status_code,
+                    "latency_ms": latency_ms,
+                    "error": data["error"],
+                    "service_url": service_url,
+                }
+
+            return {
+                "status": "ok",
+                "available": True,
+                "status_code": status_code,
+                "latency_ms": latency_ms,
+                "service_url": service_url,
+                "service_name": data.get("serviceDescription", ""),
+                "service_type": data.get("mapName", ""),
+                "version": data.get("currentVersion", ""),
+                "max_record_count": data.get("maxRecordCount", 0),
+                "has_capabilities": bool(data.get("capabilities", "")),
+                "capabilities": data.get("capabilities", ""),
+            }
+        except requests.exceptions.Timeout:
+            latency_ms = round((time.monotonic() - start) * 1000)
+            return {
+                "status": "error",
+                "available": False,
+                "status_code": 0,
+                "latency_ms": latency_ms,
+                "error": "Request timed out",
+                "service_url": service_url,
+            }
+        except requests.exceptions.ConnectionError as e:
+            latency_ms = round((time.monotonic() - start) * 1000)
+            return {
+                "status": "error",
+                "available": False,
+                "status_code": 0,
+                "latency_ms": latency_ms,
+                "error": f"Connection failed: {e}",
+                "service_url": service_url,
+            }
+        except Exception as e:
+            latency_ms = round((time.monotonic() - start) * 1000)
+            return {
+                "status": "error",
+                "available": False,
+                "status_code": 0,
+                "latency_ms": latency_ms,
+                "error": str(e),
+                "service_url": service_url,
+            }
+
+    # ------------------------------------------------------------------
     # Batch Operations (Phase 3)
     # ------------------------------------------------------------------
 
@@ -1843,6 +2068,433 @@ class ArcGISClient:
         except json.JSONDecodeError:
             logger.error("Sharing API returned non-JSON at %s", endpoint)
             return {"error": "Non-JSON response"}
+
+    # ------------------------------------------------------------------
+    # v1.5.0: Relationship & Dependency Analysis Tools
+    # ------------------------------------------------------------------
+
+    # ----- Tool 1: Item Relationship Explorer -----
+
+    def explore_item_relationships(self, item_id: str) -> dict[str, Any]:
+        """Get all relationships for a portal item, walking both directions.
+
+        Queries the /content/items/{id}/relatedItems endpoint for forward
+        relationships, then queries each related item for reverse relationships.
+
+        Args:
+            item_id: The ID of the item to explore.
+
+        Returns:
+            Dict with item info and its relationships, or error dict.
+        """
+        try:
+            # Get base item details first
+            item_info = self._sharing_request(f"/content/items/{item_id}")
+            if not item_info or "error" in item_info:
+                error_msg = (item_info.get("error", "Item not found")
+                             if item_info else "No response")
+                return {"error": error_msg}
+
+            relationships = []
+
+            # Forward relationships (items this item relates TO)
+            forward = self._sharing_request(
+                f"/content/items/{item_id}/relatedItems"
+            )
+            if forward and "relatedItems" in forward:
+                for related in forward["relatedItems"]:
+                    relationships.append({
+                        "related_item_id": related.get("id", ""),
+                        "related_title": related.get("title", ""),
+                        "related_type": related.get("type", ""),
+                        "relationship_type": related.get("relationshipType", ""),
+                        "direction": "forward",
+                    })
+
+            # Reverse relationships (items that relate TO this item)
+            reverse = self._sharing_request(
+                f"/content/items/{item_id}/relatedItems",
+                params={"direction": "reverse"},
+            )
+            if reverse and "relatedItems" in reverse:
+                for related in reverse["relatedItems"]:
+                    relationships.append({
+                        "related_item_id": related.get("id", ""),
+                        "related_title": related.get("title", ""),
+                        "related_type": related.get("type", ""),
+                        "relationship_type": related.get("relationshipType", ""),
+                        "direction": "reverse",
+                    })
+
+            return {
+                "item_id": item_id,
+                "title": item_info.get("title", ""),
+                "type": item_info.get("type", ""),
+                "owner": item_info.get("owner", ""),
+                "relationships": relationships,
+                "total_relationships": len(relationships),
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ----- Tool 2: Group Membership Auditor -----
+
+    def audit_group_members(self, group_id: str) -> dict[str, Any]:
+        """List all members of a group with their roles and details.
+
+        Paginates through /content/groups/{id}/users to get every member.
+
+        Args:
+            group_id: The ID of the group to audit.
+
+        Returns:
+            Dict with group info and full member listing, or error dict.
+        """
+        try:
+            # Get group metadata
+            group_info = self._sharing_request(f"/content/groups/{group_id}")
+            if not group_info or "error" in group_info:
+                error_msg = (group_info.get("error", "Group not found")
+                             if group_info else "No response")
+                return {"error": error_msg}
+
+            # Paginate through all members
+            members = []
+            start = 1
+            num = 100  # max per page
+
+            while True:
+                users_resp = self._sharing_request(
+                    f"/content/groups/{group_id}/users",
+                    params={"start": start, "num": num},
+                )
+
+                if not users_resp or "error" in users_resp:
+                    break
+
+                batch = users_resp.get("users", [])
+                if not batch:
+                    break
+
+                for user in batch:
+                    members.append({
+                        "username": user.get("username", ""),
+                        "full_name": user.get("fullName", ""),
+                        "email": user.get("email", ""),
+                        "role": user.get("role", ""),
+                        "last_login": user.get("lastLogin", -1),
+                        "disabled": user.get("disabled", False),
+                    })
+
+                # Advance pagination
+                next_start = users_resp.get("nextStart", 0)
+                total = users_resp.get("total", 0)
+                if next_start <= 0 or next_start >= total:
+                    break
+                start = next_start
+
+            return {
+                "group_id": group_id,
+                "title": group_info.get("title", ""),
+                "owner": group_info.get("owner", ""),
+                "description": group_info.get("description", ""),
+                "access": group_info.get("access", ""),
+                "member_count": group_info.get("memberCount", len(members)),
+                "members": members,
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ----- Tool 3: Service Dependency Scanner -----
+
+    def scan_service_dependencies(self, service_item_id: str) -> dict[str, Any]:
+        """Find all portal items that depend on a given service item.
+
+        Searches for web maps, apps, and dashboards that reference this
+        service by URL, and checks explicit item relationships.
+
+        Args:
+            service_item_id: The item ID of the service to scan.
+
+        Returns:
+            Dict listing all items that depend on this service.
+        """
+        try:
+            # Get the service item details to find its URL
+            item_info = self._sharing_request(
+                f"/content/items/{service_item_id}"
+            )
+            if not item_info or "error" in item_info:
+                error_msg = (item_info.get("error", "Item not found")
+                             if item_info else "No response")
+                return {"error": error_msg}
+
+            service_url = item_info.get("url", "")
+            service_title = item_info.get("title", "")
+            service_type = item_info.get("type", "")
+
+            depended_on_by = []
+            seen_ids: set[str] = set()
+
+            # Strategy 1: Search for items referencing this service URL.
+            # Extract a searchable portion of the URL (last meaningful segment).
+            if service_url:
+                url_parts = service_url.rstrip("/").split("/")
+                search_term = url_parts[-1] if url_parts else service_url
+
+                search_types = [
+                    "Web Map",
+                    "Web Mapping Application",
+                    "Dashboard",
+                    "Web Experience",
+                ]
+                for item_type in search_types:
+                    results = self.search_items(
+                        query=f'"{search_term}"',
+                        item_type=item_type,
+                        max_items=100,
+                    )
+                    for item in results:
+                        item_id = item.get("id", "")
+                        if item_id in seen_ids:
+                            continue
+                        # Verify by checking item data for the service URL
+                        item_data = self._sharing_request(
+                            f"/content/items/{item_id}/data"
+                        )
+                        data_str = str(item_data) if item_data else ""
+                        if service_url in data_str:
+                            seen_ids.add(item_id)
+                            depended_on_by.append({
+                                "item_id": item_id,
+                                "title": item.get("title", ""),
+                                "type": item.get("type", ""),
+                                "match_method": "url_in_data",
+                            })
+
+            # Strategy 2: Check explicit item relationships
+            related = self._sharing_request(
+                f"/content/items/{service_item_id}/relatedItems"
+            )
+            if related and "relatedItems" in related:
+                for rel in related["relatedItems"]:
+                    rel_id = rel.get("id", "")
+                    if rel_id not in seen_ids:
+                        seen_ids.add(rel_id)
+                        depended_on_by.append({
+                            "item_id": rel_id,
+                            "title": rel.get("title", ""),
+                            "type": rel.get("type", ""),
+                            "match_method": "related_item",
+                        })
+
+            return {
+                "service_id": service_item_id,
+                "title": service_title,
+                "type": service_type,
+                "url": service_url,
+                "depended_on_by": depended_on_by,
+                "dependency_count": len(depended_on_by),
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ----- Tool 4: Item Impact Analysis -----
+
+    def analyze_item_impact(self, item_id: str) -> dict[str, Any]:
+        """Assess the impact of deleting or modifying a portal item.
+
+        Combines relationship exploration, dependency scanning, and sharing
+        analysis to produce a blast radius assessment.
+
+        Args:
+            item_id: The ID of the item to analyze.
+
+        Returns:
+            Dict with impact assessment including blast radius and recommendation.
+        """
+        try:
+            # Get base item details
+            item_info = self._sharing_request(f"/content/items/{item_id}")
+            if not item_info or "error" in item_info:
+                error_msg = (item_info.get("error", "Item not found")
+                             if item_info else "No response")
+                return {"error": error_msg}
+
+            # Get relationships (forward + reverse)
+            relationships = self.explore_item_relationships(item_id)
+            direct_deps = relationships.get("relationships", [])
+
+            # Get dependencies (who uses this as a data source)
+            scan = self.scan_service_dependencies(item_id)
+            reverse_deps = scan.get("depended_on_by", [])
+
+            # Get group sharing info
+            sharing = self._sharing_request(
+                f"/content/items/{item_id}/share"
+            )
+            shared_groups = []
+            if sharing and "groups" in sharing:
+                shared_groups = [
+                    {"group_id": g.get("id", ""), "title": g.get("title", "")}
+                    for g in sharing["groups"]
+                ]
+
+            # Compute blast radius based on downstream impact count
+            total_reverse = len(reverse_deps) + len([
+                r for r in direct_deps if r.get("direction") == "reverse"
+            ])
+
+            if total_reverse == 0 and len(shared_groups) == 0:
+                blast_radius = "low"
+                recommendation = (
+                    "Safe to delete. No items depend on this "
+                    "and it is not shared with any group."
+                )
+            elif total_reverse == 0 and len(shared_groups) > 0:
+                blast_radius = "low"
+                recommendation = (
+                    f"Shared with {len(shared_groups)} group(s) but no "
+                    "items depend on it. Removing will revoke group access."
+                )
+            elif total_reverse <= 3:
+                blast_radius = "medium"
+                recommendation = (
+                    f"{total_reverse} item(s) depend on this. Coordinate "
+                    "with owners before removing."
+                )
+            elif total_reverse <= 10:
+                blast_radius = "high"
+                recommendation = (
+                    f"{total_reverse} items depend on this. High risk of "
+                    "breaking maps/apps. Requires migration plan."
+                )
+            else:
+                blast_radius = "critical"
+                recommendation = (
+                    f"{total_reverse} items depend on this. Critical "
+                    "infrastructure item. Do not remove without full "
+                    "dependency resolution."
+                )
+
+            return {
+                "item_id": item_id,
+                "title": item_info.get("title", ""),
+                "type": item_info.get("type", ""),
+                "owner": item_info.get("owner", ""),
+                "impact": {
+                    "direct_dependencies": direct_deps,
+                    "reverse_dependencies": reverse_deps,
+                    "shared_with_groups": shared_groups,
+                    "total_reverse_dependencies": total_reverse,
+                    "blast_radius": blast_radius,
+                    "recommendation": recommendation,
+                },
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ----- Tool 5: Usage Analytics (Enhanced) -----
+
+    def get_usage_analytics(
+        self,
+        start_time: str | None = None,
+        end_time: str | None = None,
+    ) -> dict[str, Any]:
+        """Get enhanced portal usage analytics with user and content breakdown.
+
+        Extends the basic portal_usage with per-user activity ranking and
+        content type distribution.
+
+        Args:
+            start_time: Epoch milliseconds or ISO string for period start.
+                        Defaults to 30 days ago.
+            end_time: Epoch milliseconds or ISO string for period end.
+                      Defaults to now.
+
+        Returns:
+            Dict with portal stats, user activity, and content breakdown.
+        """
+        try:
+            # Portal-wide usage stats via admin endpoint
+            portal_stats = self.portal_usage(
+                start_time=start_time, end_time=end_time
+            )
+
+            # Content breakdown by type
+            content_breakdown: list[dict[str, Any]] = []
+            search_types = [
+                "Feature Service",
+                "Map Service",
+                "Image Service",
+                "Web Map",
+                "Web Mapping Application",
+                "Dashboard",
+                "CSV",
+                "Shapefile",
+                "File Geodatabase",
+                "KML",
+                "Scene Layer",
+                "Web Experience",
+            ]
+            for item_type in search_types:
+                # search_items with max_items=0 would still return items,
+                # so we search with max_items=1 to get total count from results
+                items = self.search_items(
+                    query="*", item_type=item_type, max_items=1
+                )
+                # We can't get total from search_items directly since it
+                # returns a list. Use _sharing_request to get the count.
+                search_data = self._sharing_request(
+                    "/search",
+                    params={
+                        "q": f'type:"{item_type}"',
+                        "start": 1,
+                        "num": 1,
+                    },
+                )
+                count = search_data.get("total", 0) if search_data else 0
+                if count > 0:
+                    content_breakdown.append({
+                        "type": item_type,
+                        "count": count,
+                    })
+
+            # Sort by count descending
+            content_breakdown.sort(key=lambda x: x["count"], reverse=True)
+
+            # Top users by content ownership (sample from recent items)
+            user_counts: dict[str, int] = {}
+            recent = self.search_items(query="*", max_items=100)
+            for item in recent:
+                owner = item.get("owner", "")
+                if owner:
+                    user_counts[owner] = user_counts.get(owner, 0) + 1
+
+            user_activity = sorted(
+                [{"username": u, "item_count": c}
+                 for u, c in user_counts.items()],
+                key=lambda x: x["item_count"],
+                reverse=True,
+            )[:20]
+
+            return {
+                "period": {
+                    "start": start_time or "30 days ago",
+                    "end": end_time or "now",
+                },
+                "portal_stats": portal_stats,
+                "user_activity": user_activity,
+                "content_breakdown": content_breakdown,
+                "total_content_types": len(content_breakdown),
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
 
 
 # ------------------------------------------------------------------
