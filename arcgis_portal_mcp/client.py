@@ -29,8 +29,10 @@ import urllib3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# Suppress InsecureRequestWarning for self-signed certs (common with Enterprise)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# Conditionally suppress InsecureRequestWarning for self-signed certs.
+# Only suppressed when TLS verification is explicitly disabled (MCP_TLS_VERIFY=false).
+if os.environ.get("MCP_TLS_VERIFY", "true").lower() == "false":
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger("arcgis-portal-mcp")
 
@@ -52,7 +54,9 @@ class ArcGISClient:
         self._user_info: dict[str, Any] | None = None
         self._auth_method: str | None = None
         self._session = requests.Session()
-        self._session.verify = False  # noqa: S501, Enterprise portals often use self-signed certs
+        # TLS verification: ON by default (MCP_TLS_VERIFY defaults to true).
+        # Set MCP_TLS_VERIFY=false in .env for Enterprise portals with self-signed certs.
+        self._session.verify = os.environ.get("MCP_TLS_VERIFY", "true").lower() != "false"
         self._session.timeout = 30
 
         # Retry with exponential backoff for transient failures

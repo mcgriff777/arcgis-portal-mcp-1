@@ -1,6 +1,6 @@
 # arcgis-portal-mcp
 
-**v1.5.0.** 42 tools for ArcGIS Enterprise Portal and ArcGIS Online.
+**v1.6.0.** 42 tools for ArcGIS Enterprise Portal and ArcGIS Online.
 
 A Model Context Protocol (MCP) server that gives AI assistants direct access to your ArcGIS content. Search, inspect, edit, publish, and admin through natural language.
 
@@ -8,9 +8,13 @@ Works with Claude Desktop, Cursor, VS Code Copilot, and any MCP-compatible clien
 
 > **Disclaimer:** This is an independent open-source project. Not affiliated with, endorsed by, or sponsored by Esri. "ArcGIS" is a registered trademark of Esri.
 
-## What's new in v1.5.0
+## What's new in v1.6.0
 
-What's new in v1.5.0:
+- **Configurable TLS verification**: certificate verification is now ON by default; set `MCP_TLS_VERIFY=false` for self-signed Enterprise certs
+- **Scoped allowlists**: restrict which portals, owners, groups, and service URLs the server can access via `MCP_ALLOWED_*` env vars
+
+### What's new in v1.5.0
+
 - **Item impact analysis**: find out what breaks if you delete an item.
 - **Relationship explorer**: map services, web maps, layers, and apps.
 - **Usage analytics**: API calls, active users, storage trends (admin).
@@ -45,6 +49,7 @@ What's new in v1.5.0:
 - **2FA-friendly**: works with Enterprise portals that require two-factor authentication.
 - **Self-signed cert friendly**: handles Enterprise portals with self-signed certificates.
 - **Hardened**: SQL injection validation on WHERE clauses, XSS protection in OAuth callbacks, automatic retry with exponential backoff.
+- **Scoped allowlists**: optionally restrict which portals, owners, groups, and service URLs the server can access, reducing agent blast radius in production.
 
 ## Installation
 
@@ -292,6 +297,38 @@ Agent: [calls list_licenses to show license allocation and usage]
 **ArcGIS Online or portals without 2FA:** Username/password auth via `generateToken` is the fastest for MCP. Put `username` and `password` in your `.env` file for auto-connect on startup.
 
 **Full user permissions:** Use OAuth2 once to get a long-lived token, then pass it directly.
+
+## Security
+
+### TLS Certificate Verification
+
+By default, TLS certificate verification is **enabled**. For Enterprise portals with self-signed certificates, disable it in your `.env`:
+
+```env
+MCP_TLS_VERIFY=false
+```
+
+When verification is disabled, the server logs a warning. Re-enable it for production deployments with valid certificates.
+
+### Scoped Allowlists
+
+For production use, constrain the server to specific portals, owners, groups, and service endpoints. All allowlists are optional; when unset, the server operates without restrictions (backward compatible).
+
+```env
+# Only connect to these portals
+MCP_ALLOWED_PORTAL_URLS=https://gis.example.com/portal
+
+# Only access items owned by these users
+MCP_ALLOWED_OWNERS=jsmith,mgarcia,admin
+
+# Only share with these group IDs
+MCP_ALLOWED_GROUPS=abc123,def456
+
+# Only operate on services at these URL prefixes
+MCP_ALLOWED_SERVICE_URLS=https://gis.example.com/portal/sharing/rest/services
+```
+
+Operations targeting resources outside the allowlist are rejected with a clear error message. For batch operations, items outside the owner allowlist are skipped with per-item reporting.
 
 ## What's Next
 

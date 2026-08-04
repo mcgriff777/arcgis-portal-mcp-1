@@ -86,6 +86,103 @@ def _require_connected() -> ArcGISClient | None:
     return client
 
 
+# =========================================================================
+# Security: Scoped Allowlists (v1.6.0)
+# =========================================================================
+# When set, these env vars restrict which portals, owners, groups, and
+# service URLs the server can access.  Unset = no restriction (backward
+# compatible).  Comma-separated, whitespace trimmed.
+
+_allowlist_cache: dict[str, list[str] | None] | None = None
+
+
+def _load_allowlists() -> dict[str, list[str] | None]:
+    """Load and cache allowlists from environment variables."""
+    global _allowlist_cache
+    if _allowlist_cache is not None:
+        return _allowlist_cache
+
+    def _parse(key: str) -> list[str] | None:
+        raw = os.environ.get(key, "").strip()
+        if not raw:
+            return None
+        return [item.strip().rstrip("/") for item in raw.split(",") if item.strip()]
+
+    _allowlist_cache = {
+        "portal_urls": _parse("MCP_ALLOWED_PORTAL_URLS"),
+        "owners": _parse("MCP_ALLOWED_OWNERS"),
+        "groups": _parse("MCP_ALLOWED_GROUPS"),
+        "service_urls": _parse("MCP_ALLOWED_SERVICE_URLS"),
+    }
+    return _allowlist_cache
+
+
+def _check_portal_url(url: str) -> str | None:
+    """Check if a portal URL is on the allowlist. Returns error or None."""
+    lists = _load_allowlists()
+    allowed = lists["portal_urls"]
+    if allowed is None:
+        return None  # no restriction
+    normalised = url.rstrip("/").lower()
+    for entry in allowed:
+        if normalised.startswith(entry.lower()):
+            return None
+    return (
+        f"Portal URL '{url}' is not on the allowlist. "
+        f"Allowed: {', '.join(allowed)}. "
+        "Set MCP_ALLOWED_PORTAL_URLS in .env to permit this portal."
+    )
+
+
+def _check_item_owner(item_id: str) -> str | None:
+    """Check if an item's owner is on the allowlist. Returns error or None."""
+    lists = _load_allowlists()
+    allowed = lists["owners"]
+    if allowed is None:
+        return None
+    client = _get_client()
+    details = client.get_item_details(item_id)
+    owner = (details or {}).get("owner", "")
+    if owner in allowed:
+        return None
+    return (
+        f"Item {item_id} is owned by '{owner}', which is not on the allowlist. "
+        f"Allowed owners: {', '.join(allowed)}."
+    )
+
+
+def _check_group_ids(groups_str: str) -> str | None:
+    """Check if group IDs are on the allowlist. Returns error or None."""
+    lists = _load_allowlists()
+    allowed = lists["groups"]
+    if allowed is None:
+        return None
+    ids = [g.strip() for g in groups_str.split(",") if g.strip()]
+    bad = [g for g in ids if g not in allowed]
+    if bad:
+        return (
+            f"Group ID(s) {', '.join(bad)} not on the allowlist. "
+            f"Allowed groups: {', '.join(allowed)}."
+        )
+    return None
+
+
+def _check_service_url(url: str) -> str | None:
+    """Check if a service URL is on the allowlist. Returns error or None."""
+    lists = _load_allowlists()
+    allowed = lists["service_urls"]
+    if allowed is None:
+        return None
+    normalised = url.rstrip("/").lower()
+    for entry in allowed:
+        if normalised.startswith(entry.lower()):
+            return None
+    return (
+        f"Service URL '{url}' is not on the allowlist. "
+        f"Allowed prefixes: {', '.join(allowed)}."
+    )
+
+
 _env_cache: dict[str, str] | None = None
 
 
@@ -297,6 +394,12 @@ def connect_portal(
     client = _get_client()
 
     try:
+        # Allowlist: check portal URL before connecting
+        if portal_url:
+            url_err = _check_portal_url(portal_url)
+            if url_err:
+                return {"status": "error", "error": url_err}
+
         if auth_method == "auto":
             # Try auto-connect from .env
             connected, method = _auto_connect()
@@ -587,6 +690,10 @@ def describe_layer(
     client = _require_connected()
     if not client:
         return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    svc_err = _check_service_url(service_url)
+    if svc_err:
+        return {"status": "error", "error": svc_err}
 
     result = client.describe_layer(service_url, layer_id)
     if "error" in result:
@@ -946,6 +1053,10 @@ def check_service_health(
     if not client:
         return {"status": "error", "error": "Not connected. Call connect_portal first."}
 
+    svc_err = _check_service_url(service_url)
+    if svc_err:
+        return {"status": "error", "error": svc_err}
+
     result = client.check_service_health(service_url, timeout=timeout)
     return {"status": "ok", "result": result}
 
@@ -978,6 +1089,10 @@ def add_features(
     if not client:
         return {"status": "error", "error": "Not connected. Call connect_portal first."}
 
+    svc_err = _check_service_url(service_url)
+    if svc_err:
+        return {"status": "error", "error": svc_err}
+
     import json as _json
     try:
         feat_list = _json.loads(features) if isinstance(features, str) else features
@@ -1008,6 +1123,10 @@ def update_features(
     client = _require_connected()
     if not client:
         return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    svc_err = _check_service_url(service_url)
+    if svc_err:
+        return {"status": "error", "error": svc_err}
 
     import json as _json
     try:
@@ -1040,6 +1159,10 @@ def delete_features(
     client = _require_connected()
     if not client:
         return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    svc_err = _check_service_url(service_url)
+    if svc_err:
+        return {"status": "error", "error": svc_err}
 
     if not object_ids and not where_clause:
         return {"status": "error", "error": "Provide either object_ids or where_clause"}
@@ -1136,6 +1259,10 @@ def invite_to_group(
     if not client:
         return {"status": "error", "error": "Not connected. Call connect_portal first."}
 
+    grp_err = _check_group_ids(group_id)
+    if grp_err:
+        return {"status": "error", "error": grp_err}
+
     result = client.invite_to_group(
         group_id=group_id,
         users=users,
@@ -1178,6 +1305,10 @@ def update_item(
     if not client:
         return {"status": "error", "error": "Not connected. Call connect_portal first."}
 
+    owner_err = _check_item_owner(item_id)
+    if owner_err:
+        return {"status": "error", "error": owner_err}
+
     result = client.update_item(
         item_id=item_id,
         title=title or None,
@@ -1204,6 +1335,10 @@ def delete_item(item_id: str) -> dict[str, Any]:
     if not client:
         return {"status": "error", "error": "Not connected. Call connect_portal first."}
 
+    owner_err = _check_item_owner(item_id)
+    if owner_err:
+        return {"status": "error", "error": owner_err}
+
     result = client.delete_item(item_id)
     return {"status": "ok", "result": result}
 
@@ -1229,6 +1364,11 @@ def share_item(
     client = _require_connected()
     if not client:
         return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    if groups:
+        grp_err = _check_group_ids(groups)
+        if grp_err:
+            return {"status": "error", "error": grp_err}
 
     result = client.share_item(
         item_id=item_id,
@@ -1615,8 +1755,28 @@ def batch_delete_items(
     if not ids:
         return {"status": "error", "error": "No item IDs provided"}
 
+    # Owner allowlist: filter out items owned by disallowed users
+    lists = _load_allowlists()
+    skipped: list[dict[str, str]] = []
+    if lists["owners"] is not None:
+        allowed = lists["owners"]
+        filtered = []
+        for iid in ids:
+            details = client.get_item_details(iid)
+            owner = (details or {}).get("owner", "")
+            if owner in allowed:
+                filtered.append(iid)
+            else:
+                skipped.append({"item_id": iid, "owner": owner, "error": f"Owner '{owner}' not on allowlist"})
+        if not filtered:
+            return {"status": "error", "error": "No items passed owner allowlist", "skipped": skipped}
+        ids = filtered
+
     result = client.batch_delete_items(ids, owner=owner or None)
-    return {"status": "ok", "result": result}
+    out: dict[str, Any] = {"status": "ok", "result": result}
+    if skipped:
+        out["skipped"] = skipped
+    return out
 
 
 @mcp.tool()
@@ -1649,6 +1809,11 @@ def batch_share_items(
     ids = [i.strip() for i in item_ids.split(",") if i.strip()]
     if not ids:
         return {"status": "error", "error": "No item IDs provided"}
+
+    if groups:
+        grp_err = _check_group_ids(groups)
+        if grp_err:
+            return {"status": "error", "error": grp_err}
 
     result = client.batch_share_items(
         ids, owner=owner or None, everyone=everyone, org=org, groups=groups or None,
@@ -1691,12 +1856,32 @@ def batch_update_items(
     if not ids:
         return {"status": "error", "error": "No item IDs provided"}
 
+    # Owner allowlist: filter out items owned by disallowed users
+    lists = _load_allowlists()
+    skipped: list[dict[str, str]] = []
+    if lists["owners"] is not None:
+        allowed = lists["owners"]
+        filtered = []
+        for iid in ids:
+            details = client.get_item_details(iid)
+            owner = (details or {}).get("owner", "")
+            if owner in allowed:
+                filtered.append(iid)
+            else:
+                skipped.append({"item_id": iid, "owner": owner, "error": f"Owner '{owner}' not on allowlist"})
+        if not filtered:
+            return {"status": "error", "error": "No items passed owner allowlist", "skipped": skipped}
+        ids = filtered
+
     result = client.batch_update_items(
         ids, owner=owner or None,
         title=title or None, description=description or None,
         snippet=snippet or None, tags=tags or None, access=access or None,
     )
-    return {"status": "ok", "result": result}
+    out: dict[str, Any] = {"status": "ok", "result": result}
+    if skipped:
+        out["skipped"] = skipped
+    return out
 
 
 # =========================================================================
@@ -1743,6 +1928,10 @@ def export_map_image(
     client = _require_connected()
     if not client:
         return {"status": "error", "error": "Not connected. Call connect_portal first."}
+
+    svc_err = _check_service_url(service_url)
+    if svc_err:
+        return {"status": "error", "error": svc_err}
 
     if where:
         where_err = _validate_where_clause(where)
