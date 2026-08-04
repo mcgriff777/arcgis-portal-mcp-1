@@ -13,7 +13,7 @@ Works with Claude Desktop, Cursor, VS Code Copilot, and any MCP-compatible clien
 - **Configurable TLS verification**: certificate verification is now ON by default; set `MCP_TLS_VERIFY=false` for self-signed Enterprise certs
 - **Scoped allowlists**: restrict which portals, owners, groups, and service URLs the server can access via `MCP_ALLOWED_*` env vars
 
-> Security improvements inspired by community feedback from [muend](https://community.esri.com/t5/user/viewprofilepage/user-id/224925) on Esri Community.
+> Security improvements inspired by community feedback from [muend](https://community.esri.com/t5/user/viewprofilepage/user-id/1002564) on Esri Community.
 
 ### What's new in v1.5.0
 
