@@ -51,6 +51,7 @@ python -m venv .venv
 ```powershell
 .\.venv\Scripts\pip.exe install -e .
 ```
+**YES YOU NEED THE PERIOD AFTER THE e**
 
 Dependencies are resolved from `pyproject.toml`.
 
