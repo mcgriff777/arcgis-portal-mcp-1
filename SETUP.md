@@ -15,6 +15,8 @@ A step-by-step guide to running this MCP server inside VS Code Copilot Chat.
 
 ## Step 1 — Clone the project
 
+**Ensure you clone from vSE Branch, NOT master**
+
 Use either method:
 
 ```bash
