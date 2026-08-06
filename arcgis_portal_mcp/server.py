@@ -244,7 +244,7 @@ def _load_env_file(env_path: Path) -> dict[str, str]:
             # Don't override existing env vars (real env takes precedence)
             if key not in os.environ:
                 os.environ[key] = value
-            env_vars[key] = os.environ[key]
+            env_vars[key] = value
 
     logger.info(
         "Loaded %d env var(s) from %s",
