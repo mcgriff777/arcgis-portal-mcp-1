@@ -20,7 +20,7 @@ A step-by-step guide to running this MCP server inside VS Code Copilot Chat.
 Use either method:
 
 ```bash
-git clone https://github.com/YOURNAME/arcgis-portal-mcp-1.git
+git clone -b vSE https://github.com/YOURNAME/arcgis-portal-mcp-1.git
 ```
 
 Or clone through **GitHub Desktop**.
