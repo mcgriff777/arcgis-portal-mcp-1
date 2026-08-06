@@ -25,7 +25,7 @@ git clone https://github.com/YOURNAME/arcgis-portal-mcp.git
 
 Or clone through **GitHub Desktop**.
 
-## Step 2 — Open the project
+## Step 2 — Open the project in VS Code
 
 **File → Open Folder** → select the project root (the folder containing `pyproject.toml`).
 
